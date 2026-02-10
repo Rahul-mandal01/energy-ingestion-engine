@@ -1,98 +1,185 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# High-Scale Energy Ingestion Engine – Architecture Documentation
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+## 📌 Objective
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+This system is designed to ingest, correlate, and analyze **high-frequency telemetry data** coming from a large fleet of **Smart Meters and Electric Vehicles (EVs)**.
 
-## Description
+The platform handles:
+- ~**10,000 devices**
+- **2 telemetry streams per device**
+- **1 update per minute**
+- ≈ **14.4 million records per day**
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+The primary goal is to ensure **high write throughput**, **fast analytical queries**, and **efficient data correlation**, without degrading performance as data volume grows.
 
-## Project setup
+---
 
-```bash
-$ npm install
-```
+## 🔁 Telemetry Streams & Data Correlation
 
-## Compile and run the project
+### Independent Data Sources
 
-```bash
-# development
-$ npm run start
+The system ingests **two independent telemetry streams**:
 
-# watch mode
-$ npm run start:dev
+1. **Grid-side (Smart Meter)**
+   - Reports **AC energy consumed**
+   - Example metric: `kwhConsumedAc`
 
-# production mode
-$ npm run start:prod
-```
+2. **Vehicle-side (EV / Charger)**
+   - Reports **DC energy delivered**
+   - Example metrics: `kwhDeliveredDc`, `SoC`, `batteryTemp`
 
-## Run tests
+These streams:
+- Arrive **independently**
+- Are **not guaranteed** to be synchronized
+- Can arrive in **any order**
 
-```bash
-# unit tests
-$ npm run test
+---
 
-# e2e tests
-$ npm run test:e2e
+### Correlation Strategy
 
-# test coverage
-$ npm run test:cov
-```
+Instead of correlating data at write-time (which would block ingestion), the system uses:
 
-## Deployment
+### ✅ **Time-window–based correlation**
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+- Data is correlated **during analytics queries**
+- Records are grouped by:
+  - `vehicleId`
+  - **bounded time window** (e.g., last 24 hours)
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+This approach ensures:
+- Ingestion remains fast and non-blocking
+- Late or missing telemetry does not break the system
+- Analytics remain accurate within defined time windows
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+---
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## 🗄️ Data Storage Architecture
 
-## Resources
+To handle scale efficiently, the system separates data into **Cold** and **Hot** stores.
 
-Check out a few resources that may come in handy when working with NestJS:
+---
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## ❄️ Cold Store (Historical Telemetry)
 
-## Support
+Used for **analytics and auditing**.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### Characteristics
+- **Append-only**
+- **INSERT-only**
+- Never updated or deleted
 
-## Stay in touch
+### Tables
+- `meter_telemetry_history`
+- `vehicle_telemetry_history`
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+### Why this works at scale
+- INSERT operations are the fastest database writes
+- No locks caused by updates
+- Indexed by `(deviceId, timestamp)` for efficient range queries
+- Easily supports tens of millions of rows per day
 
-## License
+---
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## 🔥 Hot Store (Live Operational State)
+
+Used for **real-time dashboards and latest status**.
+
+### Characteristics
+- **One row per vehicle**
+- Updated continuously using **UPSERT**
+- Always reflects the **latest known state**
+
+### Table
+- `vehicle_live_status`
+
+### Why this exists
+Without a hot store:
+- Dashboards would need to scan millions of rows
+- Queries would slow down as data grows
+
+With a hot store:
+- Current data is fetched in **O(1) time**
+- Historical growth does not impact live performance
+
+---
+
+## 🧠 Insert vs Upsert Strategy
+
+| Data Type | Strategy | Reason |
+|---------|--------|------|
+| Historical telemetry | INSERT | Immutable, high-throughput writes |
+| Live vehicle state | UPSERT | Always keep latest snapshot |
+
+This separation avoids:
+- Full-table scans
+- Expensive update locks on large tables
+
+---
+
+## 📊 Analytics at Scale (14.4M Records / Day)
+
+### Key Techniques Used
+
+#### 1️⃣ Bounded Time Windows
+Analytics queries are always limited to a **fixed time range** (e.g., last 24 hours).
+
+This prevents:
+- Unbounded scans
+- Performance degradation over time
+
+---
+
+#### 2️⃣ Indexed Aggregations
+Indexes exist on:
+- `vehicleId`
+- `timestamp`
+
+This enables:
+- Fast SUM / AVG operations
+- Efficient grouping without scanning entire tables
+
+---
+
+#### 3️⃣ Read-Optimized Query Design
+Analytics queries:
+- Aggregate AC and DC energy separately
+- Compute efficiency at query time: 
+Efficiency = Total DC Delivered / Total AC Consumed
+
+  
+This avoids:
+- Storing redundant derived data
+- Data inconsistency issues
+
+---
+
+## 🚀 How the System Handles 14.4 Million Records Daily
+
+| Challenge | Solution |
+|-------|--------|
+| High write volume | Append-only inserts |
+| Lock contention | No updates on history tables |
+| Growing data size | Time-bounded queries |
+| Dashboard latency | Hot store with upserts |
+| Correlation complexity | Query-time correlation |
+
+The system scales **linearly** with data volume and remains performant as records accumulate.
+
+---
+
+## 🧩 Why This Architecture Was Chosen
+
+- Write-heavy systems fail when reads and writes compete
+- Real-time dashboards should not depend on historical scans
+- Correlation should not block ingestion
+- Historical data must remain immutable and auditable
+
+This architecture reflects **real-world, production-grade telemetry platforms** used in IoT and energy systems.
+
+---
+
+## 👤 Author
+
+**Rahul Kumar Mandal**  
+Backend Developer – Node.js / NestJS
+
